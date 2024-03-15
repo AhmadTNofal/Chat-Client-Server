@@ -102,23 +102,26 @@ void handle_broadcast(
  * @parm exit_loop set to true if event loop is to terminate
 */
 void handle_join(
-    online_users& online_users, std::string username, std::string, 
+    online_users& users, std::string username, std::string,
     struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
-    DEBUG("Received join\n");
-
-    // first check user not already online
-    if (auto search = online_users.find(username); search != online_users.end()) {
+    
+    if (users.find(username) != users.end()) {
         handle_error(ERR_USER_ALREADY_ONLINE, client_address, sock, exit_loop);
-    }
-    else {
-        // add new user to known user map
+    } else {
+        auto* addr = new sockaddr_in(client_address);
+        users[username] = addr;
         
-        // send back JACK message to client that has joined
+        auto msg = chat::jack_msg();
+        sock.sendto(reinterpret_cast<const char*>(&msg), sizeof(msg), 0, (sockaddr*)&client_address, sizeof(client_address));
         
-        // send broadcast (use handle broadcast) to all other clients
+        for (const auto& user : users) {
+            if (user.first != username) {
+                auto broadcastMsg = chat::broadcast_msg("Server", username + " has joined the chat.");
+                sock.sendto(reinterpret_cast<const char*>(&broadcastMsg), sizeof(broadcastMsg), 0, (sockaddr*)user.second, sizeof(sockaddr_in));
+            }
+        }
 
-        // send list message (use handle_list) set 2nd argument to "__ALL"
-        
+        handle_list(users, USER_ALL, "", client_address, sock, exit_loop);
     }
 }
 
@@ -149,24 +152,17 @@ void handle_jack(
  * @param sock socket for communicting with client
  * @parm exit_loop set to true if event loop is to terminate
 */
+// handle_directmessage implementation
 void handle_directmessage(
-    online_users& online_users, std::string username, std::string message,
+    online_users& users, std::string username, std::string message,
     struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
-    DEBUG("Received directmessage to %s\n", username.c_str());
-
-    // handle sending direct message
-    if (auto search = online_users.find(username); search != online_users.end()) {
-        DEBUG("found user dm\n");
-        for (const auto user: online_users) {
-            // remember you need to translate the client IO address with inet_ntoa, 
-            // and also the user you are comparing
-
-            // check if user matches the incoming client address, using strcmp, and
-            // and if so send message with chat::dm_msg()
-        }
-    }
-    else {
-        // TODO: error message
+    
+    auto it = users.find(username);
+    if (it != users.end()) {
+        auto msg = chat::dm_msg(username, message);
+        sock.sendto(reinterpret_cast<const char*>(&msg), sizeof(msg), 0, (sockaddr*)it->second, sizeof(sockaddr_in));
+    } else {
+        // handle_error(ERR_USER_NOT_FOUND, client_address, sock, exit_loop);
     }
 }
 
@@ -361,15 +357,14 @@ void handle_lack(
  * @parm exit_loop set to true if event loop is to terminate
 */
 void handle_exit(
-    online_users& online_users, std::string username, std::string, 
+    online_users& users, std::string, std::string, 
     struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
     
-    DEBUG("Received exit\n");
-
-    // send exit message (chat::exit_msg()) to each user, and clear up memory for them
-    
-    
-    // leave this code as it is required for exiting
+    for (const auto& user : users) {
+        auto msg = chat::exit_msg();
+        sock.sendto(reinterpret_cast<const char*>(&msg), sizeof(msg), 0, (sockaddr*)user.second, sizeof(sockaddr_in));
+    }
+    users.clear();
     exit_loop = true;
 }
 
@@ -462,7 +457,7 @@ void server() {
 */
 int main(void) { 
     // Set server IP address
-    uwe::set_ipaddr("192.168.1.8");
+    uwe::set_ipaddr("192.168.1.11");
     server();
 
     return 0;

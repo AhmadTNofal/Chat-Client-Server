@@ -30,7 +30,7 @@ std::atomic<bool> sent_leave{false};
  * @return command type ID representing the passed in command
 */
 chat::chat_type to_type(std::string cmd) {
-  switch(string_to_int(cmd.c_str())) {
+    switch(string_to_int(cmd.c_str())) {
     // case string_to_int("join"): return chat::JOIN;
     // case string_to_int("bc"): return chat::BROADCAST;
     // case string_to_int("dm"): return chat::DIRECTMESSAGE;
@@ -38,8 +38,8 @@ chat::chat_type to_type(std::string cmd) {
     case string_to_int("leave"): return chat::LEAVE;
     case string_to_int("exit"): return chat::EXIT;
     default:
-      return chat::UNKNOWN; 
-  }
+        return chat::UNKNOWN; 
+    }
 
   return chat::UNKNOWN; // unknowntype
 }
@@ -47,31 +47,45 @@ chat::chat_type to_type(std::string cmd) {
 //----------------------------------------------------------------------------------------
 
 std::pair<std::thread, Channel<chat::chat_message>> make_receiver(uwe::socket* sock) {
-  auto [tx, rx] = make_channel<chat::chat_message>();
+    auto [tx, rx] = make_channel<chat::chat_message>();
   
-  std::thread receiver_thread{[](Channel<chat::chat_message> tx, uwe::socket* sock) { 
-    try {
-        for (;;) {
-            chat::chat_message msg;
-            
-            // you need to fill in
-            // receive message from server
-            // send it over channel (tx) to main UI thread
-            
-            // exit receiver thread
-            if (msg.type_ == chat::EXIT || (msg.type_ == chat::LACK && sent_leave)) {
-                break;
+    std::thread receiver_thread([tx = std::move(tx), sock]() mutable {
+        try {
+            for (;;) {
+                chat::chat_message msg;
+                sockaddr_in sender_address;
+                size_t sender_address_len = sizeof(sender_address);
+
+                // receive message from server
+                int len = sock->recvfrom(
+                    &msg, // Direct reference to msg as void*
+                    sizeof(msg), // length of message
+                    0, // flags, only 0 supported
+                    (sockaddr*)&sender_address, // source address
+                    &sender_address_len // length of source address, adjusted to size_t*
+                );
+
+                if (len == sizeof(chat::chat_message)) {
+                    // Message received successfully, send it over channel (tx) to main UI thread
+                    tx.send(msg);
+
+                    // exit receiver thread if necessary
+                    if (msg.type_ == chat::EXIT || (msg.type_ == chat::LACK && sent_leave.load())) {
+                        break;
+                    }
+                } else {
+                    // Handle error or unexpected packet size
+                    DEBUG("Error receiving packet or unexpected packet size\n");
+                }
             }
         }
-    }
-    catch(...) {
-        DEBUG("caught exception\n");
-    };
-  }, std::move(tx), sock};
+        catch(...) {
+            DEBUG("Caught exception in receiver thread\n");
+        }
+    }); // Note the change here: removed incorrect argument
 
-  return {std::move(receiver_thread), std::move(rx)};
+    return {std::move(receiver_thread), std::move(rx)};
 }
-
 int main(int argc, char ** argv) {
     if (argc != 4) {
         printf("USAGE: %s <ipaddress> <port> <username>\n", argv[0]);
@@ -82,7 +96,7 @@ int main(int argc, char ** argv) {
     // Set client IP address
     uwe::set_ipaddr(argv[1]);
 
-    const char* server_name = "192.168.1.8";
+    const char* server_name = "192.168.1.11";
 	
 	const int server_port = SERVER_PORT;
 
@@ -142,13 +156,19 @@ int main(int argc, char ** argv) {
                         chat::chat_type type = to_type(cmds[0]);
                         switch(type) {
                             case chat::EXIT: {
-                                DEBUG("Received Exit from GUI\n");
-                                // you need to fill in
+                                 DEBUG("Received Exit from GUI\n");
+                                chat::chat_message exit_msg = chat::exit_msg();
+                                sock.sendto(reinterpret_cast<const char*>(&exit_msg), sizeof(chat::chat_message), 0,
+                                            (sockaddr*)&server_address, sizeof(server_address));
+                                exit_loop = true;  // Exit the main loop, leading to application shutdown
                                 break;
                             }
                             case chat::LEAVE: {
                                 DEBUG("Received LEAVE from GUI\n");
-                                // you need to fill in
+
+                                sent_leave = true;
+                                chat::chat_message leave_msg = chat::leave_msg();
+                                sock.sendto(reinterpret_cast<const char*>(&leave_msg), sizeof(chat::chat_message), 0, (sockaddr*)&server_address, sizeof(server_address));
                                 break;
                             }
                             case chat::LIST: {
