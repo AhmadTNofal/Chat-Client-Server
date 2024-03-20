@@ -33,7 +33,7 @@ chat::chat_type to_type(std::string cmd) {
     switch(string_to_int(cmd.c_str())) {
     // case string_to_int("join"): return chat::JOIN;
     // case string_to_int("bc"): return chat::BROADCAST;
-    // case string_to_int("dm"): return chat::DIRECTMESSAGE;
+    case string_to_int("dm"): return chat::DIRECTMESSAGE;
     case string_to_int("list"): return chat::LIST;
     case string_to_int("leave"): return chat::LEAVE;
     case string_to_int("exit"): return chat::EXIT;
@@ -130,7 +130,7 @@ int main(int argc, char ** argv) {
     // send data
 	int len = sock.sendto(
         reinterpret_cast<const char*>(&msg), sizeof(chat::chat_message), 0,
-	    (sockaddr*)&server_address, sizeof(server_address));
+        (sockaddr*)&server_address, sizeof(server_address));
         
     DEBUG("Join message (%s) sent, waiting for JACK\n", username.c_str());
     // wait for JACK
@@ -156,7 +156,7 @@ int main(int argc, char ** argv) {
                         chat::chat_type type = to_type(cmds[0]);
                         switch(type) {
                             case chat::EXIT: {
-                                 DEBUG("Received Exit from GUI\n");
+                                DEBUG("Received Exit from GUI\n");
                                 chat::chat_message exit_msg = chat::exit_msg();
                                 sock.sendto(reinterpret_cast<const char*>(&exit_msg), sizeof(chat::chat_message), 0,
                                             (sockaddr*)&server_address, sizeof(server_address));
@@ -176,6 +176,20 @@ int main(int argc, char ** argv) {
                                 // you need to fill in
                                 break;
                             }
+                            case chat::DIRECTMESSAGE: {
+                                if (cmds.size() >= 3) {
+                                // Extract recipient username and actual message
+                                std::string recipient_username = cmds[1];
+                                std::string actual_message = cmds[2];
+                                for (size_t i = 3; i < cmds.size(); ++i) {
+                                    actual_message += ":" + cmds[i];
+                                }
+                                chat::chat_message dm_msg = chat::dm_msg(username, recipient_username + ":" + actual_message);
+                                sock.sendto(reinterpret_cast<const char*>(&dm_msg), sizeof(dm_msg), 0,
+                                            (sockaddr*)&server_address, sizeof(server_address));
+                                }
+                                break;
+                                }
                             default: {
                                 // the default case is that the command is a username for DM
                                 // <username> : message
@@ -228,12 +242,18 @@ int main(int argc, char ** argv) {
                             break;
                         }
                         case chat::DIRECTMESSAGE: {
-                            std::string msg{"dm("};
-                            msg.append((char*)(*result).username_);
-                            msg.append("): ");
-                            msg.append((char*)(*result).message_);
-                            chat::display_command cmd{chat::GUI_CONSOLE, msg};
-                            gui_tx.send(cmd);
+                             // The direct message content is in the format "<sender>:<message>"
+                            std::string sender(reinterpret_cast<char*>((*result).username_));
+                            std::string content = std::string(reinterpret_cast<char*>((*result).message_));
+                            
+                            // Construct a display message
+                            std::string display_message = "DM from " + sender + ": " + content;
+
+                            // Send a command to the GUI to display the direct message
+                            chat::display_command dm_cmd{chat::GUI_CONSOLE, display_message};
+                            gui_tx.send(dm_cmd);
+
+                            DEBUG("Direct message received: %s\n", display_message.c_str());
                             break;
                         }
                         case chat::LIST: {

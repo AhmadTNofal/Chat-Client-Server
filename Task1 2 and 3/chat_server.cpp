@@ -160,15 +160,30 @@ void handle_jack(
 */
 // handle_directmessage implementation
 void handle_directmessage(
-    online_users& users, std::string username, std::string message,
-    struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
+     online_users& users, std::string sender_username, std::string message,
+    struct sockaddr_in& sender_address, uwe::socket& sock, bool& exit_loop) {
     
-    auto it = users.find(username);
-    if (it != users.end()) {
-        auto msg = chat::dm_msg(username, message);
-        sock.sendto(reinterpret_cast<const char*>(&msg), sizeof(msg), 0, (sockaddr*)it->second, sizeof(sockaddr_in));
+    auto separator_pos = message.find(':');
+    if (separator_pos != std::string::npos) {
+        std::string recipient_username = message.substr(0, separator_pos);
+        std::string actual_message = message.substr(separator_pos + 1);
+
+        auto it = users.find(recipient_username);
+        if (it != users.end()) {
+            // Construct the direct message
+            auto dm_msg = chat::dm_msg(sender_username, actual_message);
+            
+            // Send the direct message to the intended recipient
+            sock.sendto(reinterpret_cast<const char*>(&dm_msg), sizeof(dm_msg), 0,
+                        (sockaddr*)it->second, sizeof(sockaddr_in));
+            DEBUG("Direct message sent from %s to %s: %s\n", sender_username.c_str(), recipient_username.c_str(), actual_message.c_str());
+        } else {
+            // Recipient user not found, handle error
+            // handle_error(ERR_USER_NOT_FOUND, sender_address, sock, exit_loop);
+        }
     } else {
-        // handle_error(ERR_USER_NOT_FOUND, client_address, sock, exit_loop);
+        // Malformed direct message, handle error
+        // handle_error(ERR_INVALID_MESSAGE, sender_address, sock, exit_loop);
     }
 }
 
