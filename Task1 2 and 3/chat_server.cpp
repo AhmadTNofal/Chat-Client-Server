@@ -72,20 +72,26 @@ void handle_error(uint16_t err, struct sockaddr_in& client_address, uwe::socket&
 void handle_broadcast(
     online_users& online_users, std::string username, std::string msg,
     struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
-     DEBUG("Received broadcast\n");
+    
+    DEBUG("Received broadcast\n");
 
-    // send message to all users, except the one we received it from
-    for (const auto user: online_users) {
-        DEBUG("username %s\n", user.first.c_str());
-        if (strcmp(inet_ntoa(client_address.sin_addr), inet_ntoa(user.second->sin_addr)) == 0 &&
-            client_address.sin_port != user.second->sin_port) {
-            // send BC
-            auto m = chat::broadcast_msg(username, msg);
+    auto m = chat::broadcast_msg(username, msg); // Create the broadcast message once
+
+    // Iterate over the map of online users and send the message to each user except the sender
+    for (const auto& user_pair : online_users) {
+        // Check if the user is not the sender
+        if (client_address.sin_addr.s_addr != user_pair.second->sin_addr.s_addr ||
+            client_address.sin_port != user_pair.second->sin_port) {
+
+            // Send the broadcast message to the user
             int len = sock.sendto(
                 reinterpret_cast<const char*>(&m), sizeof(chat::chat_message), 0,
-                (sockaddr*)user.second, sizeof(struct sockaddr_in));
-        }
-        else {
+                (struct sockaddr*)user_pair.second, sizeof(struct sockaddr_in));
+                
+            // Log the send operation
+            DEBUG("Broadcast message sent to %s\n", user_pair.first.c_str());
+        } else {
+            // This is the sender, do not send the message back to them
             DEBUG("Not sending message to self: %s\n", msg.c_str());
         }
     }
