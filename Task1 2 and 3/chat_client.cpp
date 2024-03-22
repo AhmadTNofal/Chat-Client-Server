@@ -253,7 +253,6 @@ int main(int argc, char ** argv) {
                             chat::display_command dm_cmd{chat::GUI_CONSOLE, display_message};
                             gui_tx.send(dm_cmd);
 
-                            DEBUG("Direct message received: %s\n", display_message.c_str());
                             break;
                         }
                         case chat::LIST: {
