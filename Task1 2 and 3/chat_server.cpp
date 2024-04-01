@@ -257,12 +257,31 @@ void handle_creategroup(
                 (sockaddr*)&client_address, sizeof(struct sockaddr_in));
 }
 
-
+/**
+ * @brief handle messagegroup message
+ * 
+ * @param online_users map of usernames to their corresponding IP:PORT address
+ * @param groupname part of chat protocol packet
+ * @param message part of chat protocol packet
+ * @param client_address address of client to send message to
+ * @param sock socket for communicting with client
+ * @parm exit_loop set to true if event loop is to terminate
+*/
 
 void handle_messagegroup(
-    online_users& users, std::string groupname, std::string message,
+    online_users& users, std::string username, std::string message,
     struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
-    DEBUG("Attempting to create group with name: '%s'\n", groupname.c_str());
+    DEBUG("Received messagegroup\n");
+    //find group and send a debug message of the group name
+    for (const auto& group : groups) {
+        if (group.first.compare(username) == 0) {
+            DEBUG("Group name: %s\n", group.first.c_str());
+        }
+    }
+    // Extract the groupname from the username field of the chat_message
+    // Assuming the groupname is correctly placed in the username field for the group message scenario
+    std::string groupname = username; 
+
     // Check if the group exists
     auto it = groups.find(groupname);
     if (it == groups.end()) {
@@ -270,6 +289,9 @@ void handle_messagegroup(
         handle_error(ERR_UNKNOWN_USERNAME, client_address, sock, exit_loop);
         return;
     }
+
+    // Log for debugging
+    DEBUG("Group message to '%s': %s\n", groupname.c_str(), message.c_str());
 
     // Construct the group message
     auto gm_msg = chat::messagegroup_msg(groupname, message);
@@ -280,9 +302,11 @@ void handle_messagegroup(
         if (user_it != users.end()) { // Ensure member is online
             sock.sendto(reinterpret_cast<const char*>(&gm_msg), sizeof(gm_msg), 0,
                         (sockaddr*)user_it->second, sizeof(sockaddr_in));
+            DEBUG("Sent to %s\n", username.c_str());
         }
     }
 }
+
 
 /**
  * @brief handle list message

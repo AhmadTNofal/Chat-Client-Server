@@ -206,16 +206,18 @@ int main(int argc, char ** argv) {
                                 break;
                             }
                             case chat::MESSAGEGROUP: {
-                                if (cmds.size() >= 3) {
-                                    std::string groupname = cmds[1];
-                                    std::string message = cmds[2];
-                                    for (size_t i = 3; i < cmds.size(); ++i) {
-                                        message += ":" + cmds[i];
+                                    // Inside the main loop where commands from the GUI are processed
+                                    if (cmds.size() >= 3 && cmds[0] == "msggroup") {
+                                        std::string groupname = cmds[1];
+                                        std::string message = cmds[2];
+                                        for (size_t i = 3; i < cmds.size(); ++i) {
+                                            message += ":" + cmds[i]; // Assuming ':' is not used in group names
+                                        }
+                                        
+                                        chat::chat_message msg = chat::messagegroup_msg(groupname, message);
+                                        sock.sendto(reinterpret_cast<const char*>(&msg), sizeof(msg), 0,
+                                                    (sockaddr*)&server_address, sizeof(server_address));
                                     }
-                                    chat::chat_message msg = chat::messagegroup_msg(groupname, message);
-                                    sock.sendto(reinterpret_cast<const char*>(&msg), sizeof(msg), 0,
-                                                (sockaddr*)&server_address, sizeof(server_address));
-                                }
                                 break;
                             }
 
@@ -282,6 +284,20 @@ int main(int argc, char ** argv) {
                             chat::display_command dm_cmd{chat::GUI_CONSOLE, display_message};
                             gui_tx.send(dm_cmd);
 
+                            break;
+                        } case chat::MESSAGEGROUP: {
+                                if (result->type_ == chat::MESSAGEGROUP) {
+                                std::string groupname(reinterpret_cast<char*>(result->groupname_));
+                                std::string sender(reinterpret_cast<char*>(result->username_));
+                                std::string content(reinterpret_cast<char*>(result->message_));
+                                
+                                // Construct a display message indicating it's from a group
+                                std::string display_message = "Group [" + groupname + "] " + sender + ": " + content;
+                                
+                                // Send a command to the GUI to display the group message
+                                chat::display_command dm_cmd{chat::GUI_CONSOLE, display_message};
+                                gui_tx.send(dm_cmd);
+                            }
                             break;
                         }
                         case chat::LIST: {
