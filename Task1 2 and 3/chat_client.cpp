@@ -11,7 +11,7 @@
 // IOT socket api
 #include <iot/socket.hpp>
 
-#include <chat.hpp>
+#include "chat_ex.hpp"
 #include <gui.hpp>
 #include <colors.hpp>
 #include <util.hpp>
@@ -31,8 +31,10 @@ std::atomic<bool> sent_leave{false};
 */
 chat::chat_type to_type(std::string cmd) {
     switch(string_to_int(cmd.c_str())) {
-    // case string_to_int("join"): return chat::JOIN;
-    // case string_to_int("bc"): return chat::BROADCAST;
+    case string_to_int("join"): return chat::JOIN;
+    case string_to_int("bc"): return chat::BROADCAST;
+    case string_to_int("group"): return chat::CREATEGROUP;
+    case string_to_int("msggroup"): return chat::MESSAGEGROUP;
     case string_to_int("dm"): return chat::DIRECTMESSAGE;
     case string_to_int("list"): return chat::LIST;
     case string_to_int("leave"): return chat::LEAVE;
@@ -96,7 +98,7 @@ int main(int argc, char ** argv) {
     // Set client IP address
     uwe::set_ipaddr(argv[1]);
 
-    const char* server_name = "192.168.1.11";
+    const char* server_name = "192.168.1.27";
 	
 	const int server_port = SERVER_PORT;
 
@@ -171,7 +173,7 @@ int main(int argc, char ** argv) {
                                 sock.sendto(reinterpret_cast<const char*>(&leave_msg), sizeof(chat::chat_message), 0, (sockaddr*)&server_address, sizeof(server_address));
                                 break;
                             }
-                            case chat::LIST: {
+                            case chat::LIST: { 
                                 DEBUG("Received LIST from GUI\n");
                                 // you need to fill in
                                 break;
@@ -189,7 +191,34 @@ int main(int argc, char ** argv) {
                                             (sockaddr*)&server_address, sizeof(server_address));
                                 }
                                 break;
+                                }                        
+                            case chat::CREATEGROUP: {
+                                if (cmds.size() >= 2) {
+                                    std::string groupname = cmds[1];
+                                    std::vector<std::string> usernames;
+                                    for (size_t i = 2; i < cmds.size(); ++i) {
+                                        usernames.push_back(cmds[i]);
+                                    }
+                                    chat::chat_message group_msg = chat::creategroup_msg(groupname, usernames);
+                                    sock.sendto(reinterpret_cast<const char*>(&group_msg), sizeof(group_msg), 0,
+                                                (sockaddr*)&server_address, sizeof(server_address));
                                 }
+                                break;
+                            }
+                            case chat::MESSAGEGROUP: {
+                                if (cmds.size() >= 3) {
+                                    std::string groupname = cmds[1];
+                                    std::string message = cmds[2];
+                                    for (size_t i = 3; i < cmds.size(); ++i) {
+                                        message += ":" + cmds[i];
+                                    }
+                                    chat::chat_message msg = chat::messagegroup_msg(groupname, message);
+                                    sock.sendto(reinterpret_cast<const char*>(&msg), sizeof(msg), 0,
+                                                (sockaddr*)&server_address, sizeof(server_address));
+                                }
+                                break;
+                            }
+
                             default: {
                                 // the default case is that the command is a username for DM
                                 // <username> : message

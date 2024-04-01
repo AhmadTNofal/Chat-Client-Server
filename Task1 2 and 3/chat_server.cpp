@@ -6,8 +6,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <sstream>
+#include <algorithm>
 
-#include <chat.hpp>
+
+#include "chat_ex.hpp"
 
 #define USER_ALL "__ALL"
 #define USER_END "END"
@@ -16,6 +19,8 @@
  * @brief map of current online clients
 */
 typedef std::map<std::string, sockaddr_in *> online_users;
+
+std::vector<std::string> usernames;
 
 void handle_list(
     online_users& online_users, std::string username, std::string,
@@ -160,7 +165,7 @@ void handle_jack(
 */
 // handle_directmessage implementation
 void handle_directmessage(
-     online_users& users, std::string sender_username, std::string message,
+    online_users& users, std::string sender_username, std::string message,
     struct sockaddr_in& sender_address, uwe::socket& sock, bool& exit_loop) {
     
     auto separator_pos = message.find(':');
@@ -179,11 +184,103 @@ void handle_directmessage(
             DEBUG("Direct message sent from %s to %s: %s\n", sender_username.c_str(), recipient_username.c_str(), actual_message.c_str());
         } else {
             // Recipient user not found, handle error
-            // handle_error(ERR_USER_NOT_FOUND, sender_address, sock, exit_loop);
+            handle_error(ERR_UNEXPECTED_MSG, sender_address, sock, exit_loop);
         }
     } else {
         // Malformed direct message, handle error
-        // handle_error(ERR_INVALID_MESSAGE, sender_address, sock, exit_loop);
+        handle_error(ERR_UNEXPECTED_MSG, sender_address, sock, exit_loop);
+    }
+}
+
+std::map<std::string, std::vector<std::string>> groups;
+
+void handle_creategroup(
+    online_users& users, std::string, std::string msg, // Notice the groupname parameter is removed from here
+    struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
+        
+    // Split the input message to extract the group name and the member usernames
+    std::istringstream iss(msg);
+    std::string groupname;
+    getline(iss, groupname, ':'); // Extract the first part as the group name
+
+    // Log the extracted group name
+    DEBUG("Attempting to create group with name: '%s'\n", groupname.c_str());
+    DEBUG("this is msg: '%s'\n", msg.c_str()); 
+
+    // Continue with the check if the group already exists
+    if (groups.find(groupname) != groups.end()) {
+        DEBUG("Group '%s' already exists\n", groupname.c_str());
+        handle_error(ERR_UNEXPECTED_MSG, client_address, sock, exit_loop);
+        return;
+    }
+
+    // Parse the rest of the user list from the message
+    std::vector<std::string> usernames;
+    std::string user;
+    while (getline(iss, user, ':')) {
+        if (users.find(user) != users.end()) { // Ensure user is online
+            usernames.push_back(user);
+        }
+    }
+
+    // The rest of the function remains unchanged
+    // Add the creator to the group if not already in the list
+    std::string creatorUsername;
+    for (const auto& user_pair : users) {
+        if (client_address.sin_addr.s_addr == user_pair.second->sin_addr.s_addr &&
+            client_address.sin_port == user_pair.second->sin_port) {
+            creatorUsername = user_pair.first; // Save creator's username
+            if (std::find(usernames.begin(), usernames.end(), creatorUsername) == usernames.end()) {
+                usernames.push_back(creatorUsername);
+            }
+            break;
+        }
+    }
+
+    // Check if we have at least two members (including the creator)
+    if (usernames.size() < 2) {
+        DEBUG("Not enough members to create group '%s'\n", groupname.c_str());
+        handle_error(ERR_UNEXPECTED_MSG, client_address, sock, exit_loop);
+        return;
+    }
+
+    // Create the group in the map
+    groups[groupname] = usernames;
+
+    // Send a confirmation message back to the creator
+    auto confirm_msg = chat::broadcast_msg("Server", "Group '" + groupname + "' created successfully.");
+    DEBUG("Group '%s' created successfully with members:\n", groupname.c_str());
+    for (const auto& user : usernames) {
+        DEBUG(" - %s\n", user.c_str());
+    }
+    sock.sendto(reinterpret_cast<const char*>(&confirm_msg), sizeof(confirm_msg), 0,
+                (sockaddr*)&client_address, sizeof(struct sockaddr_in));
+}
+
+
+
+void handle_messagegroup(
+    online_users& users, std::string groupname, std::string message,
+    struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
+    DEBUG("Attempting to create group with name: '%s'\n", groupname.c_str());
+    // Check if the group exists
+    auto it = groups.find(groupname);
+    if (it == groups.end()) {
+        // Group does not exist, send an error message
+        handle_error(ERR_UNKNOWN_USERNAME, client_address, sock, exit_loop);
+        return;
+    }
+
+    // Construct the group message
+    auto gm_msg = chat::messagegroup_msg(groupname, message);
+
+    // Send the message to all group members
+    for (const std::string& username : it->second) {
+        auto user_it = users.find(username);
+        if (user_it != users.end()) { // Ensure member is online
+            sock.sendto(reinterpret_cast<const char*>(&gm_msg), sizeof(gm_msg), 0,
+                        (sockaddr*)user_it->second, sizeof(sockaddr_in));
+        }
     }
 }
 
@@ -226,7 +323,7 @@ void handle_list(
                 using_username = false;
             }
         }
-
+        
         // otherwise we fill the message field
         if(!using_username) {
             if (message_size - (user.first.length()+1) >= 0) {
@@ -402,15 +499,15 @@ void handle_exit(
 void handle_error(
     online_users& online_users, std::string username, std::string, 
     struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
-     DEBUG("Received error\n");
+    DEBUG("Received error\n");
 }
 
 /**
  * @brief function table, mapping command type to handler.
 */
-void (*handle_messages[9])(online_users&, std::string, std::string, struct sockaddr_in&, uwe::socket&, bool& exit_loop) = {
+void (*handle_messages[11])(online_users&, std::string, std::string, struct sockaddr_in&, uwe::socket&, bool& exit_loop) = {
     handle_join, handle_jack, handle_broadcast, handle_directmessage,
-    handle_list, handle_leave, handle_lack, handle_exit, handle_error
+    handle_list, handle_leave, handle_lack, handle_exit, handle_creategroup, handle_messagegroup, handle_error,
 };
 
 /**
@@ -452,7 +549,7 @@ void server() {
         int len = sock.recvfrom(
 			buffer, sizeof(buffer), 0, (struct sockaddr *)&client_address, &client_address_len);
 
-      
+
         // DEBUG("Received message:\n");
         if (len == sizeof(chat::chat_message)) {
             // handle incoming packet
@@ -460,10 +557,12 @@ void server() {
             auto type = static_cast<chat::chat_type>(message->type_);
             std::string username{(const char*)&message->username_[0]};
             std::string msg{(const char*)&message->message_[0]};
+            std::string groupname{(const char*)&message->groupname_[0]};
+            std::vector <std::string> groupusers;
 
             if (is_valid_type(type)) {
                 DEBUG("handling msg type %d\n", type);
-                // valid type, so dispatch message handler
+
                 handle_messages[type](online_users, username, msg, client_address, sock, exit_loop);
             }
         }
@@ -478,7 +577,7 @@ void server() {
 */
 int main(void) { 
     // Set server IP address
-    uwe::set_ipaddr("192.168.1.11");
+    uwe::set_ipaddr("192.168.1.27");
     server();
 
     return 0;
