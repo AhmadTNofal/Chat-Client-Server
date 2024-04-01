@@ -33,7 +33,7 @@ chat::chat_type to_type(std::string cmd) {
     switch(string_to_int(cmd.c_str())) {
     case string_to_int("join"): return chat::JOIN;
     case string_to_int("bc"): return chat::BROADCAST;
-    case string_to_int("group"): return chat::CREATEGROUP;
+    case string_to_int("creategroup"): return chat::CREATEGROUP;
     case string_to_int("msggroup"): return chat::MESSAGEGROUP;
     case string_to_int("dm"): return chat::DIRECTMESSAGE;
     case string_to_int("list"): return chat::LIST;
