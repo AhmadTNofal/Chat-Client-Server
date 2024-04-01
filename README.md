@@ -9,6 +9,7 @@ This IoT Chat Application facilitates real-time communication between clients th
 - C++17 compiler (e.g., GCC, Clang)
 - Make (for building the application)
 - Linux-based OS (the application has been tested on Ubuntu and Debian)
+- /opt/iot UWE Library
 
 ### Installation
 1. Clone the repository:
@@ -488,24 +489,253 @@ chat::chat_type to_type(std::string cmd) {
 ## Results From Task 1 and Task 2 Client and Server
 
 Joining Clients (Server Side):
+![alt text](images/image-5.png)
 
 Joining Clients (Client Side):
+![alt text](images/image-3.png)
 
 Sending a Message (Server Side):
+![alt text](images/image-6.png)
 
 Sending a Message (Client Side):
+![alt text](images/image-7.png)
 
 Direct Message (Server Side):
+![alt text](images/image-8.png)
 
 Direct Message (Client Side):
+![alt text](images/image-9.png)
 
 Leaving user (Server Side):
+![alt text](images/image-10.png)
 
 Leaving User (Client Side):
+![alt text](images/image-11.png)
 
 Exit (Server Side):
+![alt text](images/image-12.png)
 
 Exit (Client Side):
+![alt text](images/image-13.png)
+
+## Task 3: Groups and Group Messaging
+
+### Task Overview
+This extension introduces group messaging to the existing chat protocol, facilitating communication among subsets of users, regardless of their online status. Key features include the ability to create groups, add users to these groups, and send messages within them. To implement this, we've introduced modifications to the chat.hpp header file, now referred to as chat_ex.hpp, to support new message types and group management commands. The primary commands introduced include creategroup(...), for initializing new groups, and additional commands for adding members and messaging within groups. Detailed instructions on using these new features, alongside updates made to client and server source files to accommodate the extended protocol, are provided to ensure ease of use and integration into existing IoT frameworks. This part of the README aims to guide users through the new group messaging functionality, ensuring a seamless experience in enhancing communication capabilities within their IoT applications.
+
+### Files
+- <code style="color : lightGreen">chat_ex.hpp</code>
+- <code style="color : lightGreen">chat_server.cpp</code>
+- <code style="color : lightGreen">chat_client.cpp</code>
+
+## Group Creation
+- Syntax : creategroup::groupName:user1:user2:user3...
+- chat_ex.hpp:
+
+    ~~~ c++
+    inline chat_message creategroup_msg(std::string groupname, std::vector<std::string> usernames) {
+    chat_message msg{CREATEGROUP, {'\0'}, {'\0'}, {'\0'}};
+    
+    // Set the groupname_ field
+    std::string safe_groupname = groupname.substr(0, MAX_USERNAME_LENGTH - 1);
+    memcpy(&msg.groupname_[0], safe_groupname.c_str(), safe_groupname.length());
+    msg.groupname_[safe_groupname.length()] = '\0';
+
+    // Concatenate usernames for the message_ field
+    std::string concatenatedUsernames;
+    for (const std::string& username : usernames) {
+        if (concatenatedUsernames.length() + username.length() + 1 >= MAX_MESSAGE_LENGTH - 1) {
+            break;
+        }
+        if (!concatenatedUsernames.empty()) concatenatedUsernames += ":";
+        concatenatedUsernames += username;
+    }
+
+    // Set the message_ field with concatenated usernames
+    memcpy(&msg.message_[0], concatenatedUsernames.c_str(), concatenatedUsernames.length());
+    msg.message_[concatenatedUsernames.length()] = '\0';
+
+    return msg;
+    }
+    ~~~
+- chat_server.cpp:
+
+    ~~~c++
+    std::map<std::string, std::vector<std::string>> groups;
+
+    void handle_creategroup(
+        online_users& users, std::string, std::string msg, // Notice the groupname parameter is removed from here
+        struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
+            
+        // Split the input message to extract the group name and the member usernames
+        std::istringstream iss(msg);
+        std::string groupname;
+        getline(iss, groupname, ':'); // Extract the first part as the group name
+
+        // Log the extracted group name
+        DEBUG("Attempting to create group with name: '%s'\n", groupname.c_str());
+        DEBUG("this is msg: '%s'\n", msg.c_str()); 
+
+        // Continue with the check if the group already exists
+        if (groups.find(groupname) != groups.end()) {
+            DEBUG("Group '%s' already exists\n", groupname.c_str());
+            handle_error(ERR_UNEXPECTED_MSG, client_address, sock, exit_loop);
+            return;
+        }
+
+        // Parse the rest of the user list from the message
+        std::vector<std::string> usernames;
+        std::string user;
+        while (getline(iss, user, ':')) {
+            if (users.find(user) != users.end()) { // Ensure user is online
+                usernames.push_back(user);
+            }
+        }
+
+        // The rest of the function remains unchanged
+        // Add the creator to the group if not already in the list
+        std::string creatorUsername;
+        for (const auto& user_pair : users) {
+            if (client_address.sin_addr.s_addr == user_pair.second->sin_addr.s_addr &&
+                client_address.sin_port == user_pair.second->sin_port) {
+                creatorUsername = user_pair.first; // Save creator's username
+                if (std::find(usernames.begin(), usernames.end(), creatorUsername) == usernames.end()) {
+                    usernames.push_back(creatorUsername);
+                }
+                break;
+            }
+        }
+
+        // Check if we have at least two members (including the creator)
+        if (usernames.size() < 2) {
+            DEBUG("Not enough members to create group '%s'\n", groupname.c_str());
+            handle_error(ERR_UNEXPECTED_MSG, client_address, sock, exit_loop);
+            return;
+        }
+
+        // Create the group in the map
+        groups[groupname] = usernames;
+
+        // Send a confirmation message back to the creator
+        auto confirm_msg = chat::broadcast_msg("Server", "Group '" + groupname + "' created successfully.");
+        DEBUG("Group '%s' created successfully with members:\n", groupname.c_str());
+        for (const auto& user : usernames) {
+            DEBUG(" - %s\n", user.c_str());
+        }
+        sock.sendto(reinterpret_cast<const char*>(&confirm_msg), sizeof(confirm_msg), 0,
+                    (sockaddr*)&client_address, sizeof(struct sockaddr_in));
+    }
+
+    ~~~
+
+- chat_client.cpp:
+
+    ~~~c++
+    case chat::CREATEGROUP: {
+                            if (cmds.size() >= 2) {
+                                std::string groupname = cmds[1];
+                                std::vector<std::string> usernames;
+                                for (size_t i = 2; i < cmds.size(); ++i) {
+                                    usernames.push_back(cmds[i]);
+                                }
+                                chat::chat_message group_msg = chat::creategroup_msg(groupname, usernames);
+                                sock.sendto(reinterpret_cast<const char*>(&group_msg), sizeof(group_msg), 0,
+                                            (sockaddr*)&server_address, sizeof(server_address));
+                            }
+                            break;
+                        }
+    ~~~
+
+In the extended chat protocol, group creation is facilitated through modifications across chat_ex.hpp, chat_server.cpp, and chat_client.cpp. The process begins with chat_ex.hpp, where a new message type, CREATEGROUP, is introduced alongside a function, creategroup_msg, which crafts a chat message encapsulating a group name and a concatenated list of member usernames, adhering to predefined length constraints. Within chat_server.cpp, a global map tracks group names against member lists, with the handle_creategroup function extracting the group name and members from the received message, ensuring uniqueness of the group name, validating member existence and count, and automatically adding the creator to the group if not included. Upon successful validation, the group is registered in the server's group map, and a confirmation message is dispatched back to the creator. On the client side, chat_client.cpp processes user commands to create groups, constructing and sending a creategroup_msg to the server. This implementation showcases a seamless extension of the chat protocol to support dynamic group management, leveraging server-client communication to validate and execute group creation requests, thereby enhancing the protocol's functionality to include group-based messaging capabilities.
+
+### Group Messaging
+- NOTE: The messaging function is not working but the base is there.
+
+- Syntax: msggroup:groupName:Message
+
+- chat_ex.hpp:
+    ~~~c++
+    inline chat_message messagegroup_msg(std::string groupname, std::string message) {
+    chat_message msg{MESSAGEGROUP, '\0', '\0'};
+    memcpy(&msg.groupname_[0], groupname.c_str(), groupname.length());
+    msg.groupname_[groupname.length()] = '\0';
+    memcpy(&msg.message_[0], message.c_str(), message.length());
+    msg.message_[message.length()] = '\0';
+    return msg;
+    }
+    ~~~
+    
+- chat_server.cpp:
+    ~~~c++
+    void handle_messagegroup(
+    online_users& users, std::string username, std::string message,
+    struct sockaddr_in& client_address, uwe::socket& sock, bool& exit_loop) {
+    DEBUG("Received messagegroup\n");
+    //find group and send a debug message of the group name
+    for (const auto& group : groups) {
+        if (group.first.compare(username) == 0) {
+            DEBUG("Group name: %s\n", group.first.c_str());
+        }
+    }
+    // Extract the groupname from the username field of the chat_message
+    // Assuming the groupname is correctly placed in the username field for the group message scenario
+    std::string groupname = username; 
+
+    // Check if the group exists
+    auto it = groups.find(groupname);
+    if (it == groups.end()) {
+        // Group does not exist, send an error message
+        handle_error(ERR_UNKNOWN_USERNAME, client_address, sock, exit_loop);
+        return;
+    }
+
+    // Log for debugging
+    DEBUG("Group message to '%s': %s\n", groupname.c_str(), message.c_str());
+
+    // Construct the group message
+    auto gm_msg = chat::messagegroup_msg(groupname, message);
+
+    // Send the message to all group members
+    for (const std::string& username : it->second) {
+        auto user_it = users.find(username);
+        if (user_it != users.end()) { // Ensure member is online
+            sock.sendto(reinterpret_cast<const char*>(&gm_msg), sizeof(gm_msg), 0,
+                        (sockaddr*)user_it->second, sizeof(sockaddr_in));
+            DEBUG("Sent to %s\n", username.c_str());
+        }
+    }
+    }
+    ~~~
+- chat_client.cpp:
+    ~~~c++
+    case chat::MESSAGEGROUP: {
+                            // Inside the main loop where commands from the GUI are processed
+                            if (cmds.size() >= 3 && cmds[0] == "msggroup") {
+                                std::string groupname = cmds[1];
+                                std::string message = cmds[2];
+                                for (size_t i = 3; i < cmds.size(); ++i) {
+                                    message += ":" + cmds[i]; // Assuming ':' is not used in group names
+                                }
+                                
+                                chat::chat_message msg = chat::messagegroup_msg(groupname, message);
+                                sock.sendto(reinterpret_cast<const char*>(&msg), sizeof(msg), 0,
+                                            (sockaddr*)&server_address, sizeof(server_address));
+                            }
+                        break;
+                    }
+    ~~~
+
+In the enhancement to the chat protocol that introduces the capability to send messages within groups, chat_ex.hpp is updated to include a new function messagegroup_msg for crafting a group message. This function initializes a chat_message struct with a specified MESSAGEGROUP type, setting the groupname_ and message_ fields based on the provided group name and message content, respectively. The server's handling of this message type, as outlined in chat_server.cpp, involves parsing the received message to identify the target group and then iterating over the group members to send the message to each online user. This is achieved by extracting the group name from the username field of the message (a creative reuse of this field for group messaging purposes) and leveraging a global map that tracks group memberships. Upon locating the group, the server reconstructs the group message using messagegroup_msg and dispatches it to all online members of the group. On the client side, as detailed in chat_client.cpp, users can initiate a group message by constructing a command with the msggroup keyword, followed by the group name and the message itself. The client then concatenates any additional message components separated by colons (assuming colons are not used in group names) and sends the formatted message to the server using the messagegroup_msg function. This implementation demonstrates the protocol's flexibility in supporting direct group communication, leveraging existing infrastructure with minimal modifications to enable a rich messaging experience.
+
+### Expected Output:
+- Create Group (Server Side):
+![alt text](images/image-14.png)
+
+- Create Group (Client Side):
+![alt text](images/image-15.png)
+- Message group: Not working but the handle is activated in the terminal
+![alt text](images/image-16.png)
+![alt text](images/image-17.png)
 
 ## Conclusion
 The IoT Chat Application project offers a comprehensive platform for real-time communication between clients through a server, showcasing the intricacies of network programming, message handling, and protocol design within the realm of Internet of Things (IoT). By successfully implementing the server and client sides of the application, students gain practical experience in developing a multi-threaded chat application that supports both direct and broadcast messaging, along with advanced features like group messaging.
