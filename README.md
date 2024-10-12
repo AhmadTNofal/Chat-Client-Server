@@ -15,7 +15,7 @@ This IoT Chat Application facilitates real-time communication between clients th
 1. Clone the repository:
 
     ~~~bash
-    git clone https://gitlab.uwe.ac.uk/br-gaster/iot_ws2_part2.git
+    https://github.com/AhmadTNofal/Chat-Client-Server.git
     ~~~
 
 2. Navigate to the project directory:
